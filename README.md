@@ -200,18 +200,88 @@ docker build `
 
 ### 2. Running the Docker Container
 
-Run the built image locally:
+> [!IMPORTANT]
+> **Why `localhost:8000` does not connect across containers:**
+> When running inside a Docker container, `localhost` (127.0.0.1) refers only to the container's own internal loopback interface, NOT your host OS and NOT other containers. Therefore, `currency-conversion-service` cannot reach `currency-exchange-service` via `localhost:8000` unless they are properly networked.
+
+#### Method 1: Using a Shared Docker Bridge Network (Recommended)
+
+Docker bridge networks provide automatic DNS resolution by container name.
+
+1. **Create a custom bridge network** (if not already created):
+   ```powershell
+   docker network create currency-network
+   ```
+
+2. **Run `currency-exchange-service` on the network**:
+   ```powershell
+   docker run -d --rm `
+     --name currency-exchange-service `
+     --network currency-network `
+     -p 8000:8000 `
+     <DOCKER_USERNAME>/currency-exchange-service-python:latest
+   ```
+
+3. **Run `currency-conversion-service` on the same network**:
+   Pass `EXCHANGE_SERVICE_URL` pointing to `http://currency-exchange-service:8000/currency-exchange-service-python`:
+   ```powershell
+   docker run -d --rm `
+     --name currency-conversion-service `
+     --network currency-network `
+     -p 8100:8100 `
+     -e EXCHANGE_SERVICE_URL="http://currency-exchange-service:8000/currency-exchange-service-python" `
+     <DOCKER_USERNAME>/currency-conversion-service-python:latest
+   ```
+
+#### Method 2: Accessing via Host Gateway (`host.docker.internal`)
+
+If both services are running independently on the default bridge with host ports published (`-p 8000:8000` and `-p 8100:8100`), configure the conversion service to reach exchange service via the Docker host machine:
 
 ```powershell
-docker run --rm -p 8100:8100 --name currency-conversion-service <DOCKER_USERNAME>/currency-conversion-service-python:latest
+docker run -d --rm `
+  --name currency-conversion-service `
+  -p 8100:8100 `
+  -e EXCHANGE_SERVICE_URL="http://host.docker.internal:8000/currency-exchange-service-python" `
+  <DOCKER_USERNAME>/currency-conversion-service-python:latest
 ```
 
+#### Method 3: Sharing the Container Network Stack (`--network container:...`)
+
+If you want both services to share the exact same `localhost` loopback interface (allowing conversion to reach exchange directly at `localhost:8000`):
+
+1. **Start `currency-exchange-service` exposing both ports**:
+   ```powershell
+   docker run -d --rm `
+     --name currency-exchange-service `
+     -p 8000:8000 -p 8100:8100 `
+     <DOCKER_USERNAME>/currency-exchange-service-python:latest
+   ```
+
+2. **Start `currency-conversion-service` attached directly to the exchange container's network namespace**:
+   ```powershell
+   docker run -d --rm `
+     --name currency-conversion-service `
+     --network container:currency-exchange-service `
+     <DOCKER_USERNAME>/currency-conversion-service-python:latest
+   ```
+
+#### Method 4: Multi-Service Docker Compose (All-in-One)
+
+You can launch both services together with one command from the project root using `docker-compose.yml`:
+
+```powershell
+docker compose up -d
+```
+
+---
+
+#### Verify Container Health & Endpoints
 Verify in another terminal or browser:
 ```powershell
 # Check health actuator
 curl http://localhost:8100/currency-conversion-service-python/health
 
-# Query currency conversion (ensure currency-exchange-service is running or mocked)
+# Query live currency conversion (100 USD to INR)
 curl http://localhost:8100/currency-conversion-service-python/currency-conversion/from/USD/to/INR/quantity/100
 ```
 
